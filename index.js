@@ -9,17 +9,21 @@ const app = express();
 const upload = multer();
 
 const MAKE_WEBHOOK_URL = "https://hook.eu2.make.com/c8y2uy4d2aox7fpvgy9nwpr1mb98b8wl";
+const SECURE_TOKEN = "d6B33qYhZEj2TymKZAQg1A";
 
 app.all("/", upload.single("file"), async (req, res) => {
   const action = req.query.action;
+  const token = req.query.token;
 
-  // Challenge-Verifizierung
+  if (token !== SECURE_TOKEN) {
+    return res.status(403).send("Zugriff verweigert – ungültiger Token");
+  }
+
   if (req.method === "GET" && action === "challenge") {
     const challenge = req.query.challenge;
     return res.status(200).send(challenge || "No challenge provided");
   }
 
-  // Webhook-Weiterleitung an Make.com
   if (req.method === "POST" && action === "webhook") {
     try {
       const response = await fetch(MAKE_WEBHOOK_URL, {
@@ -35,7 +39,6 @@ app.all("/", upload.single("file"), async (req, res) => {
     }
   }
 
-  // Datei-Parsing
   if (req.method === "POST" && action === "parse") {
     try {
       if (!req.file) {
@@ -72,5 +75,5 @@ app.all("/", upload.single("file"), async (req, res) => {
 });
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Webhook + Parser Service läuft");
+  console.log("🚀 Sicherer Webhook + Parser Service läuft");
 });

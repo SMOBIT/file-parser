@@ -1,5 +1,5 @@
 {
-  "name": "render-combined-webhook-parser",
+  "name": "render-secure-combined-webhook-parser",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
