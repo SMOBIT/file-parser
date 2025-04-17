@@ -8,7 +8,8 @@ const fetch = require("node-fetch");
 const app = express();
 const upload = multer();
 
-const MAKE_WEBHOOK_URL = "https://n8n-mq6c.onrender.com/webhook/Kucharski";
+const MAKE_WEBHOOK_URL = "https://n8n-mq6c.onrender.com/webhook/df7a5bfd-b19e-4014-b377-11054d06cb43"
+;
 const SECURE_TOKEN = "d6B33qYhZEj2TymKZAQg1A";
 
 app.all("/", upload.single("file"), async (req, res) => {
