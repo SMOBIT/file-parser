@@ -44,8 +44,8 @@ app.all("/", upload.single("file"), async (req, res) => {
 
   if (req.method === "POST" && action === "webhook") {
     try {
-      const entries = req.body?.list || req.body?.delta || [];
-      const firstFile = entries[0];
+      const entries = req.body?.delta?.entries || [];
+      const firstFile = entries[0]?.[1];
       const payload = {
         path: firstFile?.path_display || null,
         raw: req.body
