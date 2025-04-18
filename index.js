@@ -11,6 +11,8 @@ const upload = multer();
 const N8N_WEBHOOK_URL = "https://n8n-mq6c.onrender.com/webhook/df7a5bfd-b19e-4014-b377-11054d06cb43";
 const SECURE_TOKEN = "d6B33qYhZEj2TymKZAQg1A";
 
+app.use(express.json());
+
 app.all("/", upload.single("file"), async (req, res) => {
   const action = req.query.action;
   const token = req.query.token;
@@ -19,18 +21,28 @@ app.all("/", upload.single("file"), async (req, res) => {
     return res.status(403).send("Zugriff verweigert – ungültiger Token");
   }
 
-  // Behandle GET sowohl für action=challenge als auch action=webhook (Challenge-Call von Dropbox)
+  // Challenge-Handling für Dropbox
   if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
     const challenge = req.query.challenge;
     return res.status(200).send(challenge || "No challenge provided");
   }
 
+  // Webhook: Dropbox Event → weiterleiten mit Payload
   if (req.method === "POST" && action === "webhook") {
     try {
+      const entries = req.body?.list || req.body?.delta || [];
+
+      // Nur den ersten Eintrag weitergeben – optional erweiterbar
+      const firstFile = entries[0];
+      const payload = {
+        path: firstFile?.path_display || null,
+        raw: req.body
+      };
+
       const response = await fetch(N8N_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req.body),
+        body: JSON.stringify(payload),
       });
 
       const text = await response.text();
@@ -41,6 +53,7 @@ app.all("/", upload.single("file"), async (req, res) => {
     }
   }
 
+  // Dateiparsing
   if (req.method === "POST" && action === "parse") {
     try {
       if (!req.file) {
