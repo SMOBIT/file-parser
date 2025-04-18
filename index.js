@@ -82,6 +82,63 @@ app.all("/", upload.single("file"), async (req, res) => {
   res.status(400).send("Ungültige Anfrage");
 });
 
+app.get("/fetch-delta", async (req, res) => {
+  try {
+    let cursor = loadCursor();
+    const endpoint = cursor
+      ? "https://api.dropboxapi.com/2/files/list_folder/continue"
+      : "https://api.dropboxapi.com/2/files/list_folder";
+
+    const body = cursor
+      ? { cursor }
+      : { path: "", recursive: true, include_media_info: false, include_deleted: false };
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await response.json();
+
+    if (data?.cursor) {
+      saveCursor(data.cursor);
+    }
+
+    let sentCount = 0;
+
+    if (Array.isArray(data.entries)) {
+      for (const entry of data.entries) {
+        if (entry[".tag"] === "file" && entry.path_display) {
+          console.log("📤 Sende Datei:", entry.path_display);
+
+          await fetch(N8N_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              body: {
+                path: entry.path_display,
+                dropbox_type: entry[".tag"]
+              },
+              raw: entry
+            })
+          });
+
+          sentCount++;
+        }
+      }
+    }
+
+    return res.status(200).json({ sent: sentCount });
+  } catch (err) {
+    console.error("Fehler beim Delta-Abruf:", err);
+    return res.status(500).send("Fehler beim Delta-Abruf");
+  }
+});
+
 app.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Sicherer Webhook + Parser Service läuft");
 });
