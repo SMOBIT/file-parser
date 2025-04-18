@@ -46,16 +46,24 @@ app.all("/", upload.single("file"), async (req, res) => {
     try {
       const entries = req.body?.delta?.entries || [];
 
+      console.log("📦 Empfange entries:", JSON.stringify(entries, null, 2));
+
       let path = null;
       let dropbox_type = null;
 
-      if (entries[0]?.[1]) {
-        path = entries[0][1].path_display;
-        dropbox_type = entries[0][1][".tag"];
-      } else if (entries[0]?.[0]) {
-        path = entries[0][0];
-        dropbox_type = "deleted";
+      for (const entry of entries) {
+        if (entry?.[1]?.path_display) {
+          path = entry[1].path_display;
+          dropbox_type = entry[1][".tag"];
+          break;
+        } else if (entry?.[0] && entry?.[1] === null) {
+          path = entry[0];
+          dropbox_type = "deleted";
+          break;
+        }
       }
+
+      console.log("➡️ Verwendeter Pfad:", path);
 
       const payload = {
         body: {
