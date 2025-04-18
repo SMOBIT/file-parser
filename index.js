@@ -47,7 +47,10 @@ app.all("/", upload.single("file"), async (req, res) => {
       const entries = req.body?.delta?.entries || [];
       const firstFile = entries[0]?.[1];
       const payload = {
-        path: firstFile?.path_display || null,
+        body: {
+          path: firstFile?.path_display || null,
+          dropbox_type: firstFile?.[".tag"] || null
+        },
         raw: req.body
       };
 
@@ -137,8 +140,10 @@ app.get("/fetch-delta", async (req, res) => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              path: entry.path_display,
-              dropbox_type: entry[".tag"],
+              body: {
+                path: entry.path_display,
+                dropbox_type: entry[".tag"]
+              },
               raw: entry
             })
           });
