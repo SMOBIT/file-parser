@@ -126,22 +126,33 @@ app.get("/fetch-delta", async (req, res) => {
       saveCursor(data.cursor);
     }
 
+    let sentCount = 0;
+
     if (Array.isArray(data.entries)) {
       for (const entry of data.entries) {
-        await fetch(N8N_WEBHOOK_URL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            path: entry.path_display,
-            dropbox_type: entry[".tag"]
-          })
-        });
+        if (entry[".tag"] === "file" && entry.path_display) {
+          console.log("📁 Sende Datei:", entry.path_display);
+
+          await fetch(N8N_WEBHOOK_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: entry.path_display,
+              dropbox_type: entry[".tag"],
+              raw: entry
+            })
+          });
+
+          sentCount++;
+        } else {
+          console.warn("⚠️ Überspringe Eintrag ohne gültigen path_display:", entry);
+        }
       }
     }
 
-    return res.status(200).json({ sent: data.entries?.length || 0 });
+    return res.status(200).json({ sent: sentCount });
   } catch (err) {
-    console.error("Fehler beim Delta-Abruf:", err);
+    console.error("❌ Fehler beim Delta-Abruf:", err);
     return res.status(500).send("Fehler beim Delta-Abruf");
   }
 });
