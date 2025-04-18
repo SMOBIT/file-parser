@@ -29,6 +29,7 @@ function saveCursor(cursor) {
   fs.writeFileSync(CURSOR_FILE, JSON.stringify({ cursor }), "utf-8");
 }
 
+// Webhook & File Parser
 app.all("/", upload.single("file"), async (req, res) => {
   const action = req.query.action;
   const token = req.query.token;
@@ -37,15 +38,18 @@ app.all("/", upload.single("file"), async (req, res) => {
     return res.status(403).send("Zugriff verweigert – ungültiger Token");
   }
 
+  // Dropbox Challenge
   if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
     const challenge = req.query.challenge;
     return res.status(200).send(challenge || "No challenge provided");
   }
 
+  // Webhook: Forward Dropbox Push
   if (req.method === "POST" && action === "webhook") {
     try {
       const entries = req.body?.delta?.entries || [];
       const firstFile = entries[0]?.[1];
+
       const payload = {
         body: {
           path: firstFile?.path_display || null,
@@ -57,7 +61,7 @@ app.all("/", upload.single("file"), async (req, res) => {
       const response = await fetch(N8N_WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(payload)
       });
 
       const text = await response.text();
@@ -68,6 +72,7 @@ app.all("/", upload.single("file"), async (req, res) => {
     }
   }
 
+  // File Parser
   if (req.method === "POST" && action === "parse") {
     try {
       if (!req.file) {
@@ -103,6 +108,7 @@ app.all("/", upload.single("file"), async (req, res) => {
   res.status(400).send("Ungültige Anfrage");
 });
 
+// Manuelles Delta-Fetching
 app.get("/fetch-delta", async (req, res) => {
   try {
     let cursor = loadCursor();
@@ -134,7 +140,7 @@ app.get("/fetch-delta", async (req, res) => {
     if (Array.isArray(data.entries)) {
       for (const entry of data.entries) {
         if (entry[".tag"] === "file" && entry.path_display) {
-          console.log("📁 Sende Datei:", entry.path_display);
+          console.log("📤 Sende:", entry.path_display);
 
           await fetch(N8N_WEBHOOK_URL, {
             method: "POST",
@@ -150,7 +156,7 @@ app.get("/fetch-delta", async (req, res) => {
 
           sentCount++;
         } else {
-          console.warn("⚠️ Überspringe Eintrag ohne gültigen path_display:", entry);
+          console.warn("⏭️ Überspringe ungültigen Eintrag:", entry);
         }
       }
     }
