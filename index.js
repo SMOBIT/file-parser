@@ -1,3 +1,4 @@
+
 const express = require("express");
 const multer = require("multer");
 const mammoth = require("mammoth");
@@ -37,7 +38,7 @@ async function fetchDeltaAndNotify() {
 
   const body = cursor
     ? { cursor }
-    : { path: "", recursive: true, include_media_info: false, include_deleted: false };
+    : { path: "/Rechnungen_Import", recursive: true, include_media_info: false, include_deleted: false };
 
   const response = await fetch(endpoint, {
     method: "POST",
