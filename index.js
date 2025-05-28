@@ -11,7 +11,10 @@ const path = require("path");
 const { getNewAccessToken } = require("./refresh-token");
 
 const app = express();
+
+// Wir erlauben nur das eine File-Feld namens "file"
 const upload = multer();
+const uploadFields = upload.fields([{ name: "file", maxCount: 1 }]);
 
 // Read configuration exclusively from environment variables
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
@@ -46,7 +49,6 @@ function saveCursor(cursor) {
 }
 
 async function fetchDeltaAndNotify() {
-  // Get a fresh access token using refresh_token flow
   const accessToken = await getNewAccessToken({
     refresh_token: DROPBOX_REFRESH_TOKEN,
     client_id: DROPBOX_CLIENT_ID,
@@ -62,7 +64,6 @@ async function fetchDeltaAndNotify() {
     ? { cursor }
     : { path: "/Rechnungen", recursive: true, include_media_info: false, include_deleted: false };
 
-  // Call Dropbox
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
@@ -73,7 +74,6 @@ async function fetchDeltaAndNotify() {
   });
 
   const data = await response.json();
-
   console.log("🔍 Dropbox API Antwort:", JSON.stringify(data, null, 2));
 
   if (data?.cursor) {
@@ -97,10 +97,10 @@ async function fetchDeltaAndNotify() {
   return sentCount;
 }
 
-app.all("/", upload.single("file"), async (req, res, next) => {
+app.all("/", uploadFields, async (req, res, next) => {
   try {
     const action = req.query.action;
-    const token = req.query.token;
+    const token  = req.query.token;
 
     if (token !== SECURE_TOKEN) {
       return res.status(403).send("Zugriff verweigert – ungültiger Token");
@@ -111,13 +111,23 @@ app.all("/", upload.single("file"), async (req, res, next) => {
     }
 
     if (req.method === "POST" && action === "webhook") {
+      // Hier greifen wir auf die hochgeladene Datei zu:
+      const files = req.files?.file;
+      if (!files || files.length === 0) {
+        throw new Error("Datei fehlt im Feld 'file'");
+      }
+      const uploadedFile = files[0];
+      console.log("📝 Empfangen:", uploadedFile.originalname, uploadedFile.mimetype, uploadedFile.size);
+
+      // TODO: Datei an deinen Parser senden (via fetch mit multipart/form-data)
+
+      // Anschließend weiter mit dem Delta-Polling
       const count = await fetchDeltaAndNotify();
       return res.status(200).send(`Webhook verarbeitet: ${count} Dateien`);
     }
 
     res.status(400).send("Ungültige Anfrage");
   } catch (err) {
-    // Alle Errors hierher weiterleiten
     next(err);
   }
 });
@@ -133,7 +143,6 @@ app.get("/fetch-delta", async (req, res, next) => {
 
 // ─────────────── Globaler Error‐Handler ───────────────
 app.use((err, req, res, next) => {
-  // Logge vollständigen Stack‐Trace
   console.error("🔥 Uncaught error in parser:", err.stack || err);
   res.status(500).send("Internal Server Error");
 });
