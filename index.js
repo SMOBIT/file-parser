@@ -38,7 +38,7 @@ async function fetchDeltaAndNotify() {
 
   const body = cursor
     ? { cursor }
-    : { path: "/Rechnungen_Import", recursive: true, include_media_info: false, include_deleted: false };
+    : { path: "/Rechnungen", recursive: true, include_media_info: false, include_deleted: false };
 
   const response = await fetch(endpoint, {
     method: "POST",
