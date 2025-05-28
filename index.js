@@ -97,38 +97,47 @@ async function fetchDeltaAndNotify() {
   return sentCount;
 }
 
-app.all("/", upload.single("file"), async (req, res) => {
-  const action = req.query.action;
-  const token = req.query.token;
+app.all("/", upload.single("file"), async (req, res, next) => {
+  try {
+    const action = req.query.action;
+    const token = req.query.token;
 
-  if (token !== SECURE_TOKEN) return res.status(403).send("Zugriff verweigert – ungültiger Token");
+    if (token !== SECURE_TOKEN) {
+      return res.status(403).send("Zugriff verweigert – ungültiger Token");
+    }
 
-  if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
-    return res.status(200).send(req.query.challenge || "No challenge provided");
-  }
+    if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
+      return res.status(200).send(req.query.challenge || "No challenge provided");
+    }
 
-  if (req.method === "POST" && action === "webhook") {
-    try {
+    if (req.method === "POST" && action === "webhook") {
       const count = await fetchDeltaAndNotify();
       return res.status(200).send(`Webhook verarbeitet: ${count} Dateien`);
-    } catch (err) {
-      console.error("Fehler im Webhook:", err);
-      return res.status(500).send("Fehler im Webhook");
     }
-  }
 
-  res.status(400).send("Ungültige Anfrage");
+    res.status(400).send("Ungültige Anfrage");
+  } catch (err) {
+    // Alle Errors hierher weiterleiten
+    next(err);
+  }
 });
 
-app.get("/fetch-delta", async (req, res) => {
+app.get("/fetch-delta", async (req, res, next) => {
   try {
     const count = await fetchDeltaAndNotify();
     return res.status(200).json({ sent: count });
   } catch (err) {
-    console.error("Fehler beim Delta-Abruf:", err);
-    return res.status(500).send("Fehler beim Delta-Abruf");
+    next(err);
   }
 });
+
+// ─────────────── Globaler Error‐Handler ───────────────
+app.use((err, req, res, next) => {
+  // Logge vollständigen Stack‐Trace
+  console.error("🔥 Uncaught error in parser:", err.stack || err);
+  res.status(500).send("Internal Server Error");
+});
+// ────────────────────────────────────────────────────────
 
 app.listen(process.env.PORT || 3000, () => {
   console.log("🚀 Sicherer Webhook + Parser Service läuft");
