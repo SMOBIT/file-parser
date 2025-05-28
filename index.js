@@ -13,11 +13,22 @@ const { getNewAccessToken } = require("./refresh-token");
 const app = express();
 const upload = multer();
 
-const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://n8n-mq6c.onrender.com/webhook/df7a5bfd-b19e-4014-b377-11054d06cb43";
-const SECURE_TOKEN = process.env.SECURE_TOKEN || "d6B33qYhZEj2TymKZAQg1A";
+// Read configuration exclusively from environment variables
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL;
+if (!N8N_WEBHOOK_URL) throw new Error("Missing env var N8N_WEBHOOK_URL");
+
+const SECURE_TOKEN = process.env.SECURE_TOKEN;
+if (!SECURE_TOKEN) throw new Error("Missing env var SECURE_TOKEN");
+
 const DROPBOX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
+if (!DROPBOX_REFRESH_TOKEN) throw new Error("Missing env var DROPBOX_REFRESH_TOKEN");
+
 const DROPBOX_CLIENT_ID = process.env.DROPBOX_CLIENT_ID;
+if (!DROPBOX_CLIENT_ID) throw new Error("Missing env var DROPBOX_CLIENT_ID");
+
 const DROPBOX_CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET;
+if (!DROPBOX_CLIENT_SECRET) throw new Error("Missing env var DROPBOX_CLIENT_SECRET");
+
 const CURSOR_FILE = path.join(__dirname, "cursor.json");
 
 app.use(express.json());
