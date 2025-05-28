@@ -51,6 +51,10 @@ async function fetchDeltaAndNotify() {
 
   const data = await response.json();
 
+  // 🔍 DEBUG-AUSGABE
+  console.log("🔍 Dropbox API Antwort:");
+  console.log(JSON.stringify(data, null, 2));
+
   if (data?.cursor) {
     saveCursor(data.cursor);
   }
