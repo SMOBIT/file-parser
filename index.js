@@ -1,4 +1,3 @@
-
 const express = require("express");
 const multer = require("multer");
 const mammoth = require("mammoth");
@@ -8,12 +7,17 @@ const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 
+// Import the refresh helper
+const { getNewAccessToken } = require("./refresh-token");
+
 const app = express();
 const upload = multer();
 
-const N8N_WEBHOOK_URL = "https://n8n-mq6c.onrender.com/webhook/df7a5bfd-b19e-4014-b377-11054d06cb43";
-const SECURE_TOKEN = "d6B33qYhZEj2TymKZAQg1A";
-const DROPBOX_ACCESS_TOKEN = process.env.DROPBOX_ACCESS_TOKEN;
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || "https://n8n-mq6c.onrender.com/webhook/df7a5bfd-b19e-4014-b377-11054d06cb43";
+const SECURE_TOKEN = process.env.SECURE_TOKEN || "d6B33qYhZEj2TymKZAQg1A";
+const DROPBOX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN;
+const DROPBOX_CLIENT_ID = process.env.DROPBOX_CLIENT_ID;
+const DROPBOX_CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET;
 const CURSOR_FILE = path.join(__dirname, "cursor.json");
 
 app.use(express.json());
@@ -31,6 +35,13 @@ function saveCursor(cursor) {
 }
 
 async function fetchDeltaAndNotify() {
+  // Get a fresh access token using refresh_token flow
+  const accessToken = await getNewAccessToken({
+    refresh_token: DROPBOX_REFRESH_TOKEN,
+    client_id: DROPBOX_CLIENT_ID,
+    client_secret: DROPBOX_CLIENT_SECRET
+  });
+
   const cursor = loadCursor();
   const endpoint = cursor
     ? "https://api.dropboxapi.com/2/files/list_folder/continue"
@@ -40,10 +51,11 @@ async function fetchDeltaAndNotify() {
     ? { cursor }
     : { path: "/Rechnungen", recursive: true, include_media_info: false, include_deleted: false };
 
+  // Call Dropbox
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${DROPBOX_ACCESS_TOKEN}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -51,38 +63,26 @@ async function fetchDeltaAndNotify() {
 
   const data = await response.json();
 
-  // 🔍 DEBUG-AUSGABE
-  console.log("🔍 Dropbox API Antwort:");
-  console.log(JSON.stringify(data, null, 2));
+  console.log("🔍 Dropbox API Antwort:", JSON.stringify(data, null, 2));
 
   if (data?.cursor) {
     saveCursor(data.cursor);
   }
 
   let sentCount = 0;
-
   if (Array.isArray(data.entries)) {
     for (const entry of data.entries) {
       if (entry[".tag"] === "file" && entry.path_display) {
         console.log("📤 Sende Datei:", entry.path_display);
-
         await fetch(N8N_WEBHOOK_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            body: {
-              path: entry.path_display,
-              dropbox_type: entry[".tag"]
-            },
-            raw: entry
-          })
+          body: JSON.stringify({ body: { path: entry.path_display, dropbox_type: entry[".tag"] }, raw: entry })
         });
-
         sentCount++;
       }
     }
   }
-
   return sentCount;
 }
 
@@ -90,13 +90,10 @@ app.all("/", upload.single("file"), async (req, res) => {
   const action = req.query.action;
   const token = req.query.token;
 
-  if (token !== SECURE_TOKEN) {
-    return res.status(403).send("Zugriff verweigert – ungültiger Token");
-  }
+  if (token !== SECURE_TOKEN) return res.status(403).send("Zugriff verweigert – ungültiger Token");
 
   if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
-    const challenge = req.query.challenge;
-    return res.status(200).send(challenge || "No challenge provided");
+    return res.status(200).send(req.query.challenge || "No challenge provided");
   }
 
   if (req.method === "POST" && action === "webhook") {
