@@ -82,7 +82,7 @@ async function fetchDeltaAndNotify() {
   return sentCount;
 }
 
-// ─── Haupt-Route: Nur POST action=parse und GET challenge ─────
+// ─── Haupt-Route: GET action=challenge, POST action=webhook und POST action=parse ───────────
 app.all("/", async (req, res, next) => {
   try {
     const { action, token, challenge } = req.query;
@@ -92,53 +92,45 @@ app.all("/", async (req, res, next) => {
       return res.status(403).send("Ungültiger Token");
     }
 
-    // Challenge-Response (nur GET & action=challenge)
+    // 1) Challenge-Response (GET & action=challenge)
     if (req.method === "GET" && action === "challenge") {
       return res.status(200).send(challenge || "No challenge provided");
     }
 
-    // Datei-Parsing (POST & action=parse)
+    // 2) Dropbox-Webhook (POST & action=webhook)
+    if (req.method === "POST" && action === "webhook") {
+      const count = await fetchDeltaAndNotify();
+      console.log(`✅ Dropbox-Webhook verarbeitet: ${count} Dateien`);
+      return res.status(200).send(`Webhook verarbeitet: ${count} Dateien`);
+    }
+
+    // 3) Datei-Parser (POST & action=parse)
     if (req.method === "POST" && action === "parse") {
-      // Body muss JSON sein: { fileName, mimeType, fileBase64 }
       const { fileName, mimeType, fileBase64 } = req.body;
-      if (typeof fileBase64 !== "string" || !fileName || !mimeType) {
+      if (!fileName || !mimeType || typeof fileBase64 !== "string") {
         return res.status(400).send("Body muss { fileName, mimeType, fileBase64 } enthalten");
       }
-
-      // Base64 → Buffer
       const buffer = Buffer.from(fileBase64, "base64");
       console.log("📝 Empfangen:", fileName, mimeType, buffer.length, "Bytes");
 
-      // An externen Parser schicken
       const form = new FormData();
       form.append("file", buffer, { filename: fileName, contentType: mimeType });
 
       const parserUrl = `https://file-parser-8dhp.onrender.com/?action=parse&token=${SECURE_TOKEN}`;
-      const parserRes = await fetch(parserUrl, {
-        method: "POST",
-        body:   form,
-      });
-
+      const parserRes = await fetch(parserUrl, { method: "POST", body: form });
       if (!parserRes.ok) {
         const txt = await parserRes.text();
         console.error("❌ Parser-Error:", parserRes.status, txt);
         return res.status(502).send(`Parser antwortete ${parserRes.status}`);
       }
-
       const parsed = await parserRes.json();
       console.log("✅ Parser-Result:", parsed);
 
-      // Anschließend Dropbox‐Delta pollen
       const deltaCount = await fetchDeltaAndNotify();
-
-      // Antwort an n8n
-      return res.status(200).json({
-        parsed,
-        deltaFilesSent: deltaCount,
-      });
+      return res.status(200).json({ parsed, deltaFilesSent: deltaCount });
     }
 
-    // Alles andere ist unbekannt
+    // Unknown action
     return res.status(400).send("Unknown action");
   } catch (err) {
     next(err);
