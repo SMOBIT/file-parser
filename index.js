@@ -1,34 +1,23 @@
 const express = require("express");
-const multer = require("multer");
-const mammoth = require("mammoth");
-const pdfParse = require("pdf-parse");
-const xlsx = require("xlsx");
-const fetch = require("node-fetch");
-const fs = require("fs");
-const path = require("path");
+const fetch   = require("node-fetch");
+const fs      = require("fs");
+const path    = require("path");
+// Wenn Du FormData brauchst, ist das nur für Deinen externen Parser-Call:
 const FormData = require("form-data");
 
-// Import the refresh helper
 const { getNewAccessToken } = require("./refresh-token");
 
 const app = express();
 
-// ───────────── Body-Size Limits ─────────────
-// JSON-Bodies bis 50 MB erlauben (für Base64-Strings)
+// ─── JSON-Body bis 50 MB erlauben (für Base64) ─────────
 app.use(express.json({ limit: "50mb" }));
-// URL-encoded Bodies bis 50 MB (falls mal nötig)
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
-// ─────────────────────────────────────────────
+// ───────────────────────────────────────────────────────
 
-// Dummy Multer, wir nutzen nur JSON/Base64, kein echtes multipart hier
-const upload = multer();
-const uploadSingleData = upload.single("data");
-
-const N8N_WEBHOOK_URL       = process.env.N8N_WEBHOOK_URL;       if (!N8N_WEBHOOK_URL) throw new Error("Missing env var N8N_WEBHOOK_URL");
-const SECURE_TOKEN          = process.env.SECURE_TOKEN;          if (!SECURE_TOKEN)  throw new Error("Missing env var SECURE_TOKEN");
-const DROPBOX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN; if (!DROPBOX_REFRESH_TOKEN) throw new Error("Missing env var DROPBOX_REFRESH_TOKEN");
-const DROPBOX_CLIENT_ID     = process.env.DROPBOX_CLIENT_ID;     if (!DROPBOX_CLIENT_ID) throw new Error("Missing env var DROPBOX_CLIENT_ID");
-const DROPBOX_CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET; if (!DROPBOX_CLIENT_SECRET) throw new Error("Missing env var DROPBOX_CLIENT_SECRET");
+const N8N_WEBHOOK_URL       = process.env.N8N_WEBHOOK_URL;       if (!N8N_WEBHOOK_URL)        throw new Error("Missing N8N_WEBHOOK_URL");
+const SECURE_TOKEN          = process.env.SECURE_TOKEN;          if (!SECURE_TOKEN)           throw new Error("Missing SECURE_TOKEN");
+const DROPBOX_REFRESH_TOKEN = process.env.DROPBOX_REFRESH_TOKEN; if (!DROPBOX_REFRESH_TOKEN)  throw new Error("Missing DROPBOX_REFRESH_TOKEN");
+const DROPBOX_CLIENT_ID     = process.env.DROPBOX_CLIENT_ID;     if (!DROPBOX_CLIENT_ID)      throw new Error("Missing DROPBOX_CLIENT_ID");
+const DROPBOX_CLIENT_SECRET = process.env.DROPBOX_CLIENT_SECRET; if (!DROPBOX_CLIENT_SECRET)  throw new Error("Missing DROPBOX_CLIENT_SECRET");
 
 const CURSOR_FILE = path.join(__dirname, "cursor.json");
 function loadCursor() {
@@ -56,7 +45,7 @@ async function fetchDeltaAndNotify() {
     ? { cursor }
     : { path: "/Rechnungen", recursive: true, include_media_info: false, include_deleted: false };
 
-  const rsp = await fetch(endpoint, {
+  const rsp  = await fetch(endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -85,93 +74,70 @@ async function fetchDeltaAndNotify() {
   return sentCount;
 }
 
-// ───────────── Middleware zum Umschlagen von JSON/Base64 ─────────────
-// Wenn der Client JSON sendet mit { fileBase64, fileName, mimeType },
-// wandeln wir das in req.file um, als käme es von multer.single("data").
-app.use((req, res, next) => {
-  if (req.body.fileBase64) {
-    const buf = Buffer.from(req.body.fileBase64, "base64");
-    req.file = {
-      buffer:       buf,
-      originalname: req.body.fileName    || "uploaded.pdf",
-      mimetype:     req.body.mimeType    || "application/pdf",
-      size:         buf.length,
-    };
-  }
-  next();
-});
-// ───────────────────────────────────────────────────────────────────────
-
-// Haupt-Route: Webhook-Aufrufe von n8n
-app.all("/", uploadSingleData, async (req, res, next) => {
+// ─── Die einzige Route: JSON mit Base64 ─────────────────
+app.post("/", async (req, res, next) => {
   try {
-    const action = req.query.action;
-    const token  = req.query.token;
+    const { action, token } = req.query;
     if (token !== SECURE_TOKEN) {
-      return res.status(403).send("Zugriff verweigert – ungültiger Token");
+      return res.status(403).send("Ungültiger Token");
     }
-
-    // Challenge (GET / ?action=challenge)
-    if (req.method === "GET" && (action === "challenge" || action === "webhook")) {
-      return res.status(200).send(req.query.challenge || "No challenge provided");
+    if (!action) {
+      return res.status(400).send("Missing action");
     }
-
-    // POST Webhook mit dem PDF in req.file.buffer
-    if (req.method === "POST" && action === "webhook") {
-      if (!req.file) {
-        throw new Error("Kein File erhalten – bitte JSON mit fileBase64 senden");
+    if (action === "challenge") {
+      return res.status(200).send(req.query.challenge || "No challenge");
+    }
+    if (action === "webhook") {
+      // Erwarte JSON: { fileName, mimeType, fileBase64 }
+      const { fileName, mimeType, fileBase64 } = req.body;
+      if (typeof fileBase64 !== "string") {
+        return res.status(400).send("Missing body.fileBase64");
       }
-      console.log("📝 Empfangenes File:", {
-        name:     req.file.originalname,
-        mimetype: req.file.mimetype,
-        size:     req.file.size,
-      });
+      const buffer = Buffer.from(fileBase64, "base64");
+      console.log("📝 Empfangen:", fileName, mimeType, buffer.length, "bytes");
 
-      // Parser-Aufruf per multipart/form-data
+      // Beispiel: sende an externen Parser
       const form = new FormData();
-      form.append("file", req.file.buffer, {
-        filename: req.file.originalname,
-        contentType: req.file.mimetype,
-      });
+      form.append("file", buffer, { filename: fileName, contentType: mimeType });
       const parserRes = await fetch(
         `https://file-parser-8dhp.onrender.com/?action=parse&token=${SECURE_TOKEN}`,
         { method: "POST", body: form }
       );
       if (!parserRes.ok) {
-        const text = await parserRes.text();
-        console.error("❌ Parser-Error:", parserRes.status, text);
-        throw new Error(`Parser antwortete ${parserRes.status}`);
+        const txt = await parserRes.text();
+        console.error("❌ Parser antwortete:", parserRes.status, txt);
+        throw new Error(`Parser-Fehler ${parserRes.status}`);
       }
       const parsed = await parserRes.json();
-      console.log("✅ Parser-Antwort:", parsed);
+      console.log("✅ Parser Result:", parsed);
 
-      // Danach Dropbox-Delta-Polling
+      // Dann Dropbox-Delta
       const count = await fetchDeltaAndNotify();
-      return res.status(200).json({ parsed, count });
-    }
 
-    return res.status(400).send("Ungültige Anfrage");
-  } catch (err) {
-    next(err);
+      return res.json({ parsed, deltaFilesSent: count });
+    }
+    return res.status(400).send("Unknown action");
+  } catch (e) {
+    next(e);
   }
 });
 
-// Manuelles Triggern der Delta-Abfrage
+// Optional: manuelles Delta-Triggern
 app.get("/fetch-delta", async (req, res, next) => {
   try {
     const count = await fetchDeltaAndNotify();
-    return res.status(200).json({ sent: count });
-  } catch (err) {
-    next(err);
+    res.json({ sent: count });
+  } catch (e) {
+    next(e);
   }
 });
 
 // Globaler Error-Handler
 app.use((err, req, res, next) => {
-  console.error("🔥 Uncaught error in parser:", err.stack || err);
+  console.error("🔥 Uncaught error:", err.stack || err);
   res.status(500).send("Internal Server Error");
 });
 
-app.listen(process.env.PORT || 3000, () => {
-  console.log("🚀 Sicherer Webhook + Parser Service läuft");
+app.listen(process.env.PORT||3000, () => {
+  console.log("🚀 Parser-Service läuft");
 });
