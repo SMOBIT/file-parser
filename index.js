@@ -12,7 +12,13 @@ const { getNewAccessToken } = require("./refresh-token");
 
 const app = express();
 
-// **Wichtig**: n8n liefert das PDF-Binary im Feld "data"
+// ───────────── Body-Size Limits ─────────────
+// Erlaube JSON-Bodies bis 50 MB (für Base64-Strings)
+app.use(express.json({ limit: "50mb" }));
+// Erlaube URL-encoded Bodies bis 50 MB (falls benötigt)
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// ─────────────────────────────────────────────
+
 const upload = multer();
 const uploadSingleData = upload.single("data");
 
@@ -33,19 +39,68 @@ if (!DROPBOX_CLIENT_SECRET) throw new Error("Missing env var DROPBOX_CLIENT_SECR
 
 const CURSOR_FILE = path.join(__dirname, "cursor.json");
 
-app.use(express.json());
+function loadCursor() {
+  if (fs.existsSync(CURSOR_FILE)) {
+    const raw = fs.readFileSync(CURSOR_FILE, "utf-8");
+    return JSON.parse(raw).cursor;
+  }
+  return null;
+}
 
-function loadCursor() { /* … unverändert … */ }
-function saveCursor(cur) { /* … unverändert … */ }
+function saveCursor(cursor) {
+  fs.writeFileSync(CURSOR_FILE, JSON.stringify({ cursor }), "utf-8");
+}
 
-async function fetchDeltaAndNotify() { /* … unverändert … */ }
+async function fetchDeltaAndNotify() {
+  const accessToken = await getNewAccessToken({
+    refresh_token: DROPBOX_REFRESH_TOKEN,
+    client_id: DROPBOX_CLIENT_ID,
+    client_secret: DROPBOX_CLIENT_SECRET,
+  });
 
-// Haupt-Route: hier landen die Webhook-Aufrufe von n8n
+  const cursor = loadCursor();
+  const endpoint = cursor
+    ? "https://api.dropboxapi.com/2/files/list_folder/continue"
+    : "https://api.dropboxapi.com/2/files/list_folder";
+
+  const body = cursor
+    ? { cursor }
+    : { path: "/Rechnungen", recursive: true, include_media_info: false, include_deleted: false };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  console.log("🔍 Dropbox API Antwort:", JSON.stringify(data, null, 2));
+  if (data?.cursor) saveCursor(data.cursor);
+
+  let sentCount = 0;
+  if (Array.isArray(data.entries)) {
+    for (const entry of data.entries) {
+      if (entry[".tag"] === "file" && entry.path_display) {
+        console.log("📤 Sende Datei:", entry.path_display);
+        await fetch(N8N_WEBHOOK_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ body: { path: entry.path_display, dropbox_type: entry[".tag"] }, raw: entry }),
+        });
+        sentCount++;
+      }
+    }
+  }
+  return sentCount;
+}
+
+// Haupt-Route: Webhook-Aufrufe von n8n
 app.all("/", uploadSingleData, async (req, res, next) => {
   try {
-    // Auth-Check
     const action = req.query.action;
-    const token  = req.query.token;
+    const token = req.query.token;
     if (token !== SECURE_TOKEN) {
       return res.status(403).send("Zugriff verweigert – ungültiger Token");
     }
@@ -55,38 +110,35 @@ app.all("/", uploadSingleData, async (req, res, next) => {
       return res.status(200).send(req.query.challenge || "No challenge provided");
     }
 
-    // Webhook-POST mit Datei
+    // POST Webhook mit PDF im Binary-Feld "data"
     if (req.method === "POST" && action === "webhook") {
-      // In req.file liegt jetzt das hochgeladene PDF unter "data"
       if (!req.file) {
         throw new Error("Kein File im Feld 'data' erhalten");
       }
       console.log("📝 Empfangenes File:", {
-        name:     req.file.originalname,
+        name: req.file.originalname,
         mimetype: req.file.mimetype,
-        size:     req.file.size,
+        size: req.file.size,
       });
 
-      // *** HIER DEIN PARSER-CALL ***
-      // z.B. via fetch Multipart/Form-Data an file-parser senden:
+      // Beispiel: sende per fetch multipart/form-data an Deinen Parser
       /*
       const form = new FormData();
       form.append("file", req.file.buffer, req.file.originalname);
-      const parserRes = await fetch("https://file-parser-8dhp.onrender.com/?action=parse&token=…", {
-        method: "POST",
-        body: form,
-      });
+      const parserRes = await fetch(
+        "https://file-parser-8dhp.onrender.com/?action=parse&token=DEIN_TOKEN",
+        { method: "POST", body: form }
+      );
       const parsed = await parserRes.json();
       console.log("Parser-Antwort:", parsed);
       */
 
-      // Dann weiter mit Dropbox-Delta-Polling
+      // Dann Dropbox-Delta-Polling
       const count = await fetchDeltaAndNotify();
       return res.status(200).send(`Webhook verarbeitet: ${count} Dateien`);
     }
 
-    // Sonstige Anfragen
-    res.status(400).send("Ungültige Anfrage");
+    return res.status(400).send("Ungültige Anfrage");
   } catch (err) {
     next(err);
   }
